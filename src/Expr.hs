@@ -9,104 +9,123 @@ import Data.List (isPrefixOf)
 import qualified Data.Text as T
 import Control.Applicative hiding (some, many)
 
-data AExpr =IntLit Int
-          | AVar String
-          | ABinary ArithOp AExpr AExpr
-            deriving (Show)
 
-data ArithOp = Add | Sub | Mul | Div | Mod
-    deriving (Show)
+data Expr  = IntLit Int
+           | BoolLit Bool
+    --       | StringLit String
+           | Var String
+           | FunCall String [Expr]
+           | Binary BinaryOp Expr Expr
+           | Unary UnaryOp Expr
+        deriving (Show, Eq)
 
-data BoolOp = And | Or
-    deriving (Show)
+data UnaryOp = Neg | Not
+        deriving (Show, Eq)
 
-data RelOp = Less | Greater | LessOrEq | GreatOrEq | Equal | NotEqual
-    deriving (Show)
+data BinaryOp = Add | Sub | Mul | Div | Mod
+              | And | Or
+        --      | Concat
+              | Less | Greater | LessOrEq | GreatOrEq | Equal | NotEqual
+        deriving (Show, Eq)
 
-data BExpr = BoolConst Bool
-           | Not BExpr
-           | BBinary BoolOp BExpr BExpr
-           | RBinary RelOp AExpr AExpr
-            deriving (Show)
-           
 
-addop :: Parser Text (AExpr->AExpr->AExpr)
+addop :: Parser Text (Expr->Expr->Expr)
 addop = do
     op <- token $ char '+' <|> char '-'
     return $ case op of
-        '+' -> ABinary Add
-        '-' -> ABinary Sub
+        '+' -> Binary Add
+        '-' -> Binary Sub
 
-mulop :: Parser Text (AExpr->AExpr->AExpr)
+mulop :: Parser Text (Expr->Expr->Expr)
 mulop = do
     op <- token $ char '*' <|> char '/' <|> char '%' 
     return $ case op of
-        '*' -> ABinary Mul
-        '/' -> ABinary Div
-        '%' -> ABinary Mod
+        '*' -> Binary Mul
+        '/' -> Binary Div
+        '%' -> Binary Mod
 
-literal :: Parser Text AExpr
+literal :: Parser Text Expr
 literal = do
     nr <- token number
     return (IntLit nr)
 
-aVar :: Parser Text AExpr
-aVar = do
+var :: Parser Text Expr
+var = do
     name <- token identifier
-    return (AVar name)
+    return (Var name)
 
-aFactor :: Parser Text AExpr
+aFactor :: Parser Text Expr
 aFactor = do
-    fac <- token $ aVar <|> literal <|> bracket (char '(') aExpr (char ')')
+    fac <- token $ fCall <|> var <|> literal <|> bracket (char '(') aExpr (char ')')
     return fac
 
-aExpr :: Parser Text AExpr
-aExpr = chainl1 (chainl1 aFactor mulop) addop
+negAFactor :: Parser Text Expr
+negAFactor = do
+    fac <- token $ char '-' *> aFactor
+    return (Unary Neg fac)
 
-andop :: Parser Text (BExpr -> BExpr -> BExpr)
+aExpr :: Parser Text Expr
+aExpr = chainl1 (chainl1 (aFactor <|> negAFactor ) mulop) addop
+
+andop :: Parser Text (Expr -> Expr -> Expr)
 andop = do
     op <- token $ string "and"
-    return (BBinary And)
+    return (Binary And)
 
-orop :: Parser Text (BExpr -> BExpr -> BExpr)
+orop :: Parser Text (Expr -> Expr -> Expr)
 orop = do
     op <- token $ string "or"
-    return (BBinary Or)
+    return (Binary Or)
 
-boolean :: Parser Text BExpr
+boolean :: Parser Text Expr
 boolean = do
     boolean <- token $ string "true" <|> string "false"
-    return (BoolConst $ if boolean == "true" then True else False)
+    return (BoolLit $ if boolean == "true" then True else False)
 
 
-
-
-rExpr :: Parser Text BExpr
+rExpr :: Parser Text Expr
 rExpr = do
     fac1 <- aExpr
     op <- choice $ map string ["==","!=",">=","<=",">","<"]
     fac2 <- aExpr
     return $ case op of
-        "==" -> RBinary Equal fac1 fac2
-        "!=" -> RBinary NotEqual fac1 fac2
-        ">=" -> RBinary GreatOrEq fac1 fac2
-        "<=" -> RBinary LessOrEq fac1 fac2
-        ">"  -> RBinary Greater fac1 fac2
-        "<"  -> RBinary Less fac1 fac2
+        "==" -> Binary Equal fac1 fac2
+        "!=" -> Binary NotEqual fac1 fac2
+        ">=" -> Binary GreatOrEq fac1 fac2
+        "<=" -> Binary LessOrEq fac1 fac2
+        ">"  -> Binary Greater fac1 fac2
+        "<"  -> Binary Less fac1 fac2
 
-bFactor :: Parser Text BExpr
+bFactor :: Parser Text Expr
 bFactor = do
-    fac <- token $ boolean <|> rExpr <|> bracket (char '(') bExpr (char ')')
+    fac <- token $ boolean <|> rExpr <|> fCall <|> var <|> bracket (char '(') bExpr (char ')')
     return fac
 
-notBFactor :: Parser Text BExpr
+notBFactor :: Parser Text Expr
 notBFactor = do
     token $ string "not"
     fac <- bFactor
-    return (Not fac)
+    return (Unary Not fac)
 
-bExpr :: Parser Text BExpr
-bExpr = chainl1 (chainl1 (bFactor<|>notBFactor) andop) orop
+bExpr :: Parser Text Expr
+bExpr = chainl1 (chainl1 (notBFactor <|> bFactor) andop) orop
 
+{-nil :: Parser Text Expr
+nil = do
+    string "nil"
+    return (Nil)
+-}
+
+expr :: Parser Text Expr
+expr = chainl1 (chainl1 (notBFactor <|> bFactor <|> negAFactor <|> aFactor) (andop <|> mulop)) (orop <|> addop)
+
+
+fCall :: Parser Text Expr
+fCall = do
+    name <- token $ identifier
+    token $ char '('
+    exprs <- (\x xs -> x++xs) <$> oneOrNone expr <*> many (char ',' *> expr)
+    token $ char ')'
+    return $ FunCall name exprs
 
 

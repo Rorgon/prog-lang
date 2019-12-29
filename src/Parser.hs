@@ -60,7 +60,13 @@ satisfy p = Parser f
 
 string :: Text -> Parser Text Text
 string s = Parser $ \inp -> if s `T.isPrefixOf` inp then Right (s, T.drop (T.length s) inp) 
-                                                  else Left "Syntax Error"          
+                                                  else Left "Syntax Error"
+                                            
+beside :: Parser a b -> Parser a c -> Parser a b
+beside p1 p2 = Parser $ \inp -> case runParser p2 inp of
+                                Left _ -> runParser p1 inp
+                                Right _ -> Left $ "Syntax Error"
+
 some :: Parser s a -> Parser s [a]
 some p = (:) <$> p <*> (some p <|> pure [])
 
@@ -88,7 +94,6 @@ alphaNum = satisfy isAlphaNum
 nothing :: Parser s Text
 nothing = return T.empty
 
-
 number :: Parser Text Int
 number = do
     sign <- (string "-" <|> nothing)
@@ -108,6 +113,12 @@ choice :: [Parser a b] -> Parser a b
 choice [] = empty
 choice (x:xs) = x <|> choice xs
 
+none :: Parser a [b]
+none = return []
+
+anything :: Parser Text Char
+anything = satisfy (\_ -> True)
+
 chainl1 :: Parser a b -> Parser a (b->b->b) -> Parser a b
 chainl1 p op = do
     x <- p
@@ -123,16 +134,26 @@ bracket open p close = do
     x <- p
     close
     return x
-{-
-comment :: Parser String String
+
+oneOrNone :: Parser a b -> Parser a [b]
+oneOrNone p = Parser $ \inp -> case runParser p inp of
+    Left _ -> Right ([],inp)
+    Right (x,inp') -> Right ([x],inp')
+
+sepBy :: Parser a b -> Parser a c -> Parser a [b]
+sepBy p sep = (\x xs -> x:xs) <$> p <*> many (sep *> p)
+
+
+comment :: Parser Text Text
 comment = do
     string "//"
-    comm <- many $ many alphaNum <|> spaces
+    comm <- many (anything `beside` (string "//"))
     string "//"
-    return $ concat comm
--}
+    return $ T.pack comm
+
+
 junk :: Parser Text Text
-junk = spaces 
+junk = comment <|> spaces 
 
 token :: Parser Text a -> Parser Text a
 token p = do
